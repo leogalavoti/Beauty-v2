@@ -1,117 +1,60 @@
 (() => {
-  const checkoutBase = 'https://pay.kiwify.com.br/ebQ9LUB';
-  const current = new URLSearchParams(window.location.search);
-  const checkout = new URL(checkoutBase);
+  'use strict';
 
-  const trackingKeys = [
-    'utm_source',
-    'utm_medium',
-    'utm_campaign',
-    'utm_content',
-    'utm_term',
-    'fbclid',
-    'src',
-    'sck'
-  ];
+  const CHECKOUT_HOST = 'pay.kiwify.com.br';
+  const trackedScrolls = new Set();
 
-  trackingKeys.forEach((key) => {
-    const value = current.get(key);
-    if (value) checkout.searchParams.set(key, value);
-  });
-
-  const checkoutUrl = checkout.toString();
-
-  const sendMetaCustomEvent = (eventName, params = {}) => {
-    if (typeof window.fbq === 'function') {
-      window.fbq('trackCustom', eventName, params);
+  function trackMeta(eventName, params = {}) {
+    try {
+      if (typeof window.fbq === 'function') {
+        window.fbq('trackCustom', eventName, params);
+      }
+    } catch (_) {
+      // Rastreamento nunca pode impedir a navegação.
     }
-  };
+  }
 
-  const sendClarityEvent = (eventName) => {
-    if (typeof window.clarity === 'function') {
-      window.clarity('event', eventName);
+  function withAttribution(url) {
+    try {
+      const destination = new URL(url);
+      const source = new URLSearchParams(window.location.search);
+      ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','fbclid','src','sck'].forEach((key) => {
+        const value = source.get(key);
+        if (value) destination.searchParams.set(key, value);
+      });
+      return destination.toString();
+    } catch (_) {
+      return url;
     }
-  };
+  }
 
-  document.querySelectorAll('[data-checkout]').forEach((link, index) => {
-    link.href = checkoutUrl;
+  // O href já existe no HTML. Este código só acrescenta atribuição e telemetria.
+  document.querySelectorAll('a[data-track]').forEach((link) => {
+    if (link.hostname === CHECKOUT_HOST || link.href.includes(CHECKOUT_HOST)) {
+      link.href = withAttribution(link.href);
+    }
 
     link.addEventListener('click', () => {
-      const ctaName =
-        link.dataset.cta ||
-        link.id ||
-        `cta_${index + 1}`;
-
-      sendMetaCustomEvent('CTA_Click', {
-        cta: ctaName,
+      trackMeta(link.dataset.track || 'CTA_Click', {
         value: 29.90,
-        currency: 'BRL'
+        currency: 'BRL',
+        location: link.dataset.track || 'unknown'
       });
-
-      sendClarityEvent(`CTA_${ctaName}`);
-    });
+      // Sem preventDefault, sem setTimeout e sem bloquear a saída para o checkout.
+    }, { passive: true });
   });
 
-  const scrollMarks = [25, 50, 75, 90];
-  const triggeredScrolls = new Set();
-
-  const checkScrollDepth = () => {
+  function onScroll() {
     const doc = document.documentElement;
-
-    const scrollTop =
-      window.scrollY ||
-      doc.scrollTop;
-
-    const scrollableHeight =
-      doc.scrollHeight - window.innerHeight;
-
-    if (scrollableHeight <= 0) return;
-
-    const scrollPercent =
-      Math.round((scrollTop / scrollableHeight) * 100);
-
-    scrollMarks.forEach((mark) => {
-      if (
-        scrollPercent >= mark &&
-        !triggeredScrolls.has(mark)
-      ) {
-        triggeredScrolls.add(mark);
-
-        sendMetaCustomEvent(`Scroll_${mark}`, {
-          percent: mark
-        });
-
-        sendClarityEvent(`Scroll_${mark}`);
+    const max = Math.max(1, doc.scrollHeight - window.innerHeight);
+    const pct = Math.round((window.scrollY / max) * 100);
+    [25, 50, 75, 90].forEach((mark) => {
+      if (pct >= mark && !trackedScrolls.has(mark)) {
+        trackedScrolls.add(mark);
+        trackMeta(`Scroll_${mark}`, { percent: mark });
       }
     });
-  };
-
-  window.addEventListener('scroll', checkScrollDepth, {
-    passive: true
-  });
-
-  const items = document.querySelectorAll('.reveal');
-
-  if ('IntersectionObserver' in window) {
-    const observer = new IntersectionObserver(
-      (entries, obs) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-            obs.unobserve(entry.target);
-          }
-        });
-      },
-      {
-        threshold: 0.12,
-        rootMargin: '0px 0px -35px'
-      }
-    );
-
-    items.forEach((item) => observer.observe(item));
-  } else {
-    items.forEach((item) =>
-      item.classList.add('is-visible')
-    );
   }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
 })();
